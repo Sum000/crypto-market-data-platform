@@ -16,21 +16,21 @@ The physical model is based on the following design decisions:
 - dbt manages transformations within Snowflake.
 - DuckDB supports local analytical development.
 
-The schemas in this document are preliminary. Final column definitions will be validated against actual CoinGecko API responses before implementation.
+The initial schemas have been validated against live CoinGecko Demo API responses for the endpoints tested during source analysis. Validation results and remaining implementation-time checks are documented in the relevant dataset sections.
 
 ## 2. Data Modeling Conventions
 
 ### 2.1 Naming conventions
 
-| Element | Convention | Example |
-|---|---|---|
-| Dataset names | snake_case | `market_snapshot` |
-| Column names | snake_case | `market_cap` |
-| Primary identifiers | `_id` suffix | `coin_id` |
-| Date columns | `_date` suffix | `snapshot_date` |
-| Timestamp columns | `_at` suffix | `ingested_at` |
-| Monetary values | Currency suffix where applicable | `market_cap_usd` |
-| Boolean columns | Descriptive boolean names | `is_active` |
+| Element             | Convention                       | Example           |
+| ------------------- | -------------------------------- | ----------------- |
+| Dataset names       | snake_case                       | `market_snapshot` |
+| Column names        | snake_case                       | `market_cap`      |
+| Primary identifiers | `_id` suffix                     | `coin_id`         |
+| Date columns        | `_date` suffix                   | `snapshot_date`   |
+| Timestamp columns   | `_at` suffix                     | `ingested_at`     |
+| Monetary values     | Currency suffix where applicable | `market_cap_usd`  |
+| Boolean columns     | Descriptive boolean names        | `is_active`       |
 
 ### 2.2 Timestamp conventions
 
@@ -42,13 +42,13 @@ The schemas in this document are preliminary. Final column definitions will be v
 
 The following timestamps have distinct meanings:
 
-| Timestamp | Meaning |
-|---|---|
-| `observation_timestamp` | Time represented by a historical market observation |
-| `snapshot_at` | Actual time a market snapshot was collected |
-| `source_last_updated_at` | Last update timestamp supplied by CoinGecko |
-| `ingested_at` | Time the API response was retrieved |
-| `processed_at` | Time the data was processed |
+| Timestamp                | Meaning                                             |
+| ------------------------ | --------------------------------------------------- |
+| `observation_timestamp`  | Time represented by a historical market observation |
+| `snapshot_at`            | Actual time a market snapshot was collected         |
+| `source_last_updated_at` | Last update timestamp supplied by CoinGecko         |
+| `ingested_at`            | Time the API response was retrieved                 |
+| `processed_at`           | Time the data was processed                         |
 
 ### 2.3 Numeric data types
 
@@ -67,13 +67,13 @@ Null values returned by the source must remain null. Missing values must not aut
 
 The platform contains the following logical datasets:
 
-| Dataset | Description | Primary storage |
-|---|---|---|
-| Cryptocurrency reference | Latest metadata for tracked cryptocurrencies | S3 Silver |
-| Daily market snapshot | Daily market state of tracked cryptocurrencies | S3 Silver |
-| Historical market observations | Historical price, market cap, and volume observations | S3 Silver |
-| Global market snapshot | Daily global cryptocurrency market statistics | S3 Silver |
-| Pipeline execution metadata | Pipeline execution and operational information | Logs / operational storage |
+| Dataset                        | Description                                           | Primary storage            |
+| ------------------------------ | ----------------------------------------------------- | -------------------------- |
+| Cryptocurrency reference       | Latest metadata for tracked cryptocurrencies          | S3 Silver                  |
+| Daily market snapshot          | Daily market state of tracked cryptocurrencies        | S3 Silver                  |
+| Historical market observations | Historical price, market cap, and volume observations | S3 Silver                  |
+| Global market snapshot         | Daily global cryptocurrency market statistics         | S3 Silver                  |
+| Pipeline execution metadata    | Pipeline execution and operational information        | Logs / operational storage |
 
 Daily top-20 universe membership will initially be derived from the daily market snapshot using market-cap rank. A separate physical dataset is not required at this stage.
 
@@ -87,17 +87,19 @@ The following schemas represent the canonical processed datasets.
 
 **Grain:** One record per CoinGecko cryptocurrency ID.
 
-| Column | Data type | Nullable | Description |
-|---|---|---|---|
-| `coin_id` | STRING | No | CoinGecko cryptocurrency identifier |
-| `symbol` | STRING | Yes | Cryptocurrency symbol |
-| `name` | STRING | Yes | Cryptocurrency name |
-| `last_seen_at` | TIMESTAMP | No | Last time the cryptocurrency was observed |
-| `updated_at` | TIMESTAMP | No | Last time the reference record was updated |
+| Column         | Data type | Nullable | Description                                |
+| -------------- | --------- | -------- | ------------------------------------------ |
+| `coin_id`      | STRING    | No       | CoinGecko cryptocurrency identifier        |
+| `symbol`       | STRING    | Yes      | Cryptocurrency symbol                      |
+| `name`         | STRING    | Yes      | Cryptocurrency name                        |
+| `last_seen_at` | TIMESTAMP | No       | Last time the cryptocurrency was observed  |
+| `updated_at`   | TIMESTAMP | No       | Last time the reference record was updated |
 
 **Business key:** `coin_id`
 
-**Update strategy:** Upsert using `coin_id`. The latest name and symbol are maintained. Historical metadata changes are not tracked as separate dimension versions in the initial implementation.
+**Update strategy:** Upsert using coin_id. The latest name and symbol are maintained. Historical metadata changes are not tracked as separate dimension versions in the initial implementation.
+
+Source validation: The /coins/list endpoint returned 21,294 records with 21,294 unique CoinGecko IDs during validation. The endpoint provides reference identifiers, names, and symbols. The full list is maintained as reference data; historical market ingestion remains restricted to the selected top-20 universe.
 
 ### 4.2 `market_snapshot`
 
@@ -105,22 +107,38 @@ The following schemas represent the canonical processed datasets.
 
 **Grain:** One record per cryptocurrency per scheduled daily snapshot per quote currency.
 
-| Column | Data type | Nullable | Description |
-|---|---|---|---|
-| `coin_id` | STRING | No | CoinGecko cryptocurrency identifier |
-| `snapshot_date` | DATE | No | Scheduled UTC collection date |
-| `snapshot_at` | TIMESTAMP | No | Actual collection timestamp |
-| `quote_currency` | STRING | No | Reporting currency, initially USD |
-| `current_price` | DECIMAL(38,18) | Yes | Current market price |
-| `market_cap` | DECIMAL(38,18) | Yes | Market capitalization |
-| `total_volume` | DECIMAL(38,18) | Yes | Trading volume |
-| `market_cap_rank` | INTEGER | Yes | Market-cap ranking |
-| `circulating_supply` | DECIMAL(38,18) | Yes | Circulating supply |
-| `total_supply` | DECIMAL(38,18) | Yes | Total supply |
-| `max_supply` | DECIMAL(38,18) | Yes | Maximum supply |
-| `source_last_updated_at` | TIMESTAMP | Yes | Source-provided update timestamp |
-| `ingested_at` | TIMESTAMP | No | API retrieval timestamp |
-| `run_id` | STRING | No | Pipeline execution identifier |
+| Column                   | Data type      | Nullable | Description                         |
+| ------------------------ | -------------- | -------- | ----------------------------------- |
+| `coin_id`                | STRING         | No       | CoinGecko cryptocurrency identifier |
+| `snapshot_date`          | DATE           | No       | Scheduled UTC collection date       |
+| `snapshot_at`            | TIMESTAMP      | No       | Actual collection timestamp         |
+| `quote_currency`         | STRING         | No       | Reporting currency, initially USD   |
+| `current_price`          | DECIMAL(38,18) | Yes      | Current market price                |
+| `market_cap`             | DECIMAL(38,18) | Yes      | Market capitalization               |
+| `total_volume`           | DECIMAL(38,18) | Yes      | Trading volume                      |
+| `market_cap_rank`        | INTEGER        | Yes      | Market-cap ranking                  |
+| `circulating_supply`     | DECIMAL(38,18) | Yes      | Circulating supply                  |
+| `total_supply`           | DECIMAL(38,18) | Yes      | Total supply                        |
+| `max_supply`             | DECIMAL(38,18) | Yes      | Maximum supply                      |
+| `source_last_updated_at` | TIMESTAMP      | Yes      | Source-provided update timestamp    |
+| `ingested_at`            | TIMESTAMP      | No       | API retrieval timestamp             |
+| `run_id`                 | STRING         | No       | Pipeline execution identifier       |
+
+### Source Nullability and Data Handling
+
+The `/coins/markets` endpoint returns null values for certain optional fields. The observed fields include `roi`, `max_supply`, and 24-hour market-change attributes.
+
+The tested /coins/markets response returned 20 records.
+roi was null for 18 records.
+max_supply was null for 12 records.
+Four 24-hour change attributes each contained one null value.
+These nulls did not invalidate the corresponding cryptocurrency records.
+
+Null values are retained as NULL in Silver and Snowflake. They are not replaced with zero or used as a reason to discard an otherwise valid cryptocurrency record.
+
+Required identifiers such as `coin_id` must be present. Optional market attributes may be null.
+
+The complete API response is retained in Bronze to support future schema changes and additional analytical requirements.
 
 **Business key:**
 
@@ -141,18 +159,44 @@ The collection schedule is 00:45 UTC (06:15 IST).
 
 **Grain:** One record per cryptocurrency per source observation timestamp per quote currency.
 
-| Column | Data type | Nullable | Description |
-|---|---|---|---|
-| `coin_id` | STRING | No | CoinGecko cryptocurrency identifier |
-| `observation_timestamp` | TIMESTAMP | No | Source observation timestamp in UTC |
-| `observation_date` | DATE | No | UTC calendar date derived from observation timestamp |
-| `quote_currency` | STRING | No | Reporting currency |
-| `price` | DECIMAL(38,18) | Yes | Historical price |
-| `market_cap` | DECIMAL(38,18) | Yes | Historical market capitalization |
-| `total_volume` | DECIMAL(38,18) | Yes | Historical trading volume |
-| `ingested_at` | TIMESTAMP | No | API retrieval timestamp |
-| `processed_at` | TIMESTAMP | No | Processing timestamp |
-| `run_id` | STRING | No | Pipeline execution identifier |
+| Column                  | Data type      | Nullable | Description                                          |
+| ----------------------- | -------------- | -------- | ---------------------------------------------------- | -------------------------------------- |
+| `coin_id`               | STRING         | No       | CoinGecko cryptocurrency identifier                  |
+| `observation_timestamp` | TIMESTAMP      | No       | Source observation timestamp in UTC                  |
+| `observation_date`      | DATE           | No       | UTC calendar date derived from observation timestamp |
+| `quote_currency`        | STRING         | No       | Reporting currency                                   |
+| `price`                 | DECIMAL(38,18) | Yes      | Historical price                                     |
+| `market_cap`            | DECIMAL(38,18) | Yes      | Historical market capitalization                     |
+| `total_volume`          | DECIMAL(38,18) | Yes      | Historical trading volume                            |
+| `ingested_at`           | TIMESTAMP      | No       | API retrieval timestamp                              |
+| `processed_at`          | TIMESTAMP      | No       | Processing timestamp                                 |
+| `run_id`                | STRING         | No       | Pipeline execution identifier                        | ### Historical API Response Validation |
+
+The CoinGecko `/coins/{id}/market_chart` endpoint was tested using Bitcoin, USD, and a 365-day lookback.
+
+The response contained three arrays:
+
+- `prices`
+- `market_caps`
+- `total_volumes`
+
+Each array contained 366 observations.
+
+Validation confirmed:
+
+- All three arrays contained the same number of observations.
+- Their timestamp sequences matched.
+- All 366 timestamps were unique.
+- Timestamps were ordered chronologically.
+- The timestamps were represented in Unix milliseconds.
+
+The observed response contained daily observations and a partial latest-day observation.
+
+During processing, the three arrays must be aligned using their timestamps. Array position alone must not be treated as a permanent record identifier.
+
+The validation applies to the tested Bitcoin response. Other cryptocurrency responses must also pass the same checks during ingestion.
+
+The latest observation must not automatically be treated as a finalized daily closing value. The source timestamp must be retained, and recently published observations must be refreshed to account for source revisions.
 
 **Business key:**
 
@@ -173,17 +217,20 @@ The historical market-chart endpoint provides separate arrays for prices, market
 
 **Grain:** One record per global market snapshot date.
 
-| Column | Data type | Nullable | Description |
-|---|---|---|---|
-| `snapshot_date` | DATE | No | Scheduled UTC collection date |
-| `snapshot_at` | TIMESTAMP | No | Actual observation timestamp |
-| `total_market_cap_usd` | DECIMAL(38,18) | Yes | Total cryptocurrency market capitalization |
-| `total_volume_usd` | DECIMAL(38,18) | Yes | Total cryptocurrency trading volume |
-| `btc_dominance` | DECIMAL(38,18) | Yes | Bitcoin market dominance percentage |
-| `active_cryptocurrencies` | INTEGER | Yes | Active cryptocurrency count |
-| `markets` | INTEGER | Yes | Number of markets, if returned |
-| `ingested_at` | TIMESTAMP | No | API retrieval timestamp |
-| `run_id` | STRING | No | Pipeline execution identifier |
+| Column                             | Data type      | Nullable | Description                                           |
+| ---------------------------------- | -------------- | -------- | ----------------------------------------------------- |
+| `snapshot_date`                    | DATE           | No       | Scheduled UTC collection date                         |
+| `snapshot_at`                      | TIMESTAMP      | No       | Actual observation timestamp                          |
+| `total_market_cap_usd`             | DECIMAL(38,18) | Yes      | Total cryptocurrency market capitalization            |
+| `total_volume_usd`                 | DECIMAL(38,18) | Yes      | Total cryptocurrency trading volume                   |
+| `btc_dominance`                    | DECIMAL(38,18) | Yes      | Bitcoin market dominance percentage                   |
+| `active_cryptocurrencies`          | INTEGER        | Yes      | Active cryptocurrency count                           |
+| `markets`                          | INTEGER        | Yes      | Number of markets, if returned                        |
+| `ingested_at`                      | TIMESTAMP      | No       | API retrieval timestamp                               |
+| `run_id`                           | STRING         | No       | Pipeline execution identifier                         |
+| `market_cap_change_percentage_24h` | DECIMAL(38,18) | Yes      | Global market-cap percentage change over 24 hours     |
+| `volume_change_percentage_24h`     | DECIMAL(38,18) | Yes      | Global trading-volume percentage change over 24 hours |
+| `source_updated_at`                | TIMESTAMP      | Yes      | Source-provided global statistics update time         |
 
 **Business key:** `snapshot_date`
 
@@ -197,21 +244,21 @@ Snowflake will organize the data into separate schemas based on transformation r
 
 ### 5.1 Schema organization
 
-| Schema | Responsibility |
-|---|---|
-| `STAGING` | Source-aligned datasets loaded from S3 |
+| Schema         | Responsibility                                     |
+| -------------- | -------------------------------------------------- |
+| `STAGING`      | Source-aligned datasets loaded from S3             |
 | `INTERMEDIATE` | Standardized and reusable business transformations |
-| `MART` | Analytical fact and dimension models |
-| `OPS` | Operational metadata, if maintained in Snowflake |
+| `MART`         | Analytical fact and dimension models               |
+| `OPS`          | Operational metadata, if maintained in Snowflake   |
 
 ### 5.2 Analytical models
 
-| Model | Type | Grain |
-|---|---|---|
-| `DIM_CRYPTOCURRENCY` | Dimension | One record per cryptocurrency |
-| `FCT_MARKET_SNAPSHOT` | Fact | One cryptocurrency per daily snapshot and quote currency |
-| `FCT_HISTORICAL_MARKET` | Fact | One cryptocurrency per observation timestamp and quote currency |
-| `FCT_GLOBAL_MARKET_SNAPSHOT` | Fact | One global market observation per daily snapshot |
+| Model                        | Type      | Grain                                                           |
+| ---------------------------- | --------- | --------------------------------------------------------------- |
+| `DIM_CRYPTOCURRENCY`         | Dimension | One record per cryptocurrency                                   |
+| `FCT_MARKET_SNAPSHOT`        | Fact      | One cryptocurrency per daily snapshot and quote currency        |
+| `FCT_HISTORICAL_MARKET`      | Fact      | One cryptocurrency per observation timestamp and quote currency |
+| `FCT_GLOBAL_MARKET_SNAPSHOT` | Fact      | One global market observation per daily snapshot                |
 
 ### 5.3 Universe membership model
 
@@ -311,12 +358,12 @@ File sizes and query patterns will guide future partitioning and compaction deci
 
 ## 7. Data Update and Correction Strategy
 
-| Dataset | Update strategy | Business key |
-|---|---|---|
-| Cryptocurrency dimension | Upsert | `coin_id` |
-| Daily market snapshot | Upsert | `coin_id + snapshot_date + quote_currency` |
-| Historical observations | Upsert | `coin_id + observation_timestamp + quote_currency` |
-| Global market snapshot | Upsert | `snapshot_date` |
+| Dataset                  | Update strategy | Business key                                       |
+| ------------------------ | --------------- | -------------------------------------------------- |
+| Cryptocurrency dimension | Upsert          | `coin_id`                                          |
+| Daily market snapshot    | Upsert          | `coin_id + snapshot_date + quote_currency`         |
+| Historical observations  | Upsert          | `coin_id + observation_timestamp + quote_currency` |
+| Global market snapshot   | Upsert          | `snapshot_date`                                    |
 
 ### 7.1 Historical corrections in Parquet
 
@@ -343,18 +390,18 @@ Existing records are updated when their business keys match incoming records. Ne
 
 The following checks are required before processed datasets are considered ready for analytical consumption.
 
-| Dataset | Validation rule |
-|---|---|
-| Cryptocurrency | `coin_id` must not be null |
-| Cryptocurrency | `coin_id` must be unique |
-| Market snapshot | Composite business key must be unique |
-| Market snapshot | `snapshot_date` must be present |
-| Market snapshot | Market-cap rank must be positive when present |
-| Historical observations | Composite business key must be unique |
-| Historical observations | Observation timestamps must be valid |
+| Dataset                 | Validation rule                                             |
+| ----------------------- | ----------------------------------------------------------- |
+| Cryptocurrency          | `coin_id` must not be null                                  |
+| Cryptocurrency          | `coin_id` must be unique                                    |
+| Market snapshot         | Composite business key must be unique                       |
+| Market snapshot         | `snapshot_date` must be present                             |
+| Market snapshot         | Market-cap rank must be positive when present               |
+| Historical observations | Composite business key must be unique                       |
+| Historical observations | Observation timestamps must be valid                        |
 | Historical observations | Timestamps must fall within the requested historical window |
-| Global snapshot | `snapshot_date` must be unique |
-| All datasets | Required ingestion metadata must be present |
+| Global snapshot         | `snapshot_date` must be unique                              |
+| All datasets            | Required ingestion metadata must be present                 |
 
 Additional business validations:
 
@@ -373,16 +420,16 @@ Pipeline execution metadata is maintained separately from market datasets.
 
 The following fields are proposed:
 
-| Column | Data type | Description |
-|---|---|---|
-| `run_id` | STRING | Unique pipeline execution identifier |
-| `pipeline_name` | STRING | Name of the executed pipeline |
-| `started_at` | TIMESTAMP | Execution start time |
-| `completed_at` | TIMESTAMP | Execution completion time |
-| `run_status` | STRING | Execution status |
-| `records_read` | INTEGER | Number of records read |
-| `records_written` | INTEGER | Number of records written |
-| `error_message` | STRING | Error details, when applicable |
+| Column            | Data type | Description                          |
+| ----------------- | --------- | ------------------------------------ |
+| `run_id`          | STRING    | Unique pipeline execution identifier |
+| `pipeline_name`   | STRING    | Name of the executed pipeline        |
+| `started_at`      | TIMESTAMP | Execution start time                 |
+| `completed_at`    | TIMESTAMP | Execution completion time            |
+| `run_status`      | STRING    | Execution status                     |
+| `records_read`    | INTEGER   | Number of records read               |
+| `records_written` | INTEGER   | Number of records written            |
+| `error_message`   | STRING    | Error details, when applicable       |
 
 This information supports execution tracking, troubleshooting, retry management, and operational monitoring.
 
